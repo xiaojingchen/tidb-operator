@@ -105,7 +105,7 @@ func memberUpgraded() (bool, error) {
 		Expect(tc.Status.TiKV.Phase).NotTo(Equal(v1alpha1.UpgradePhase))
 		Expect(tc.Status.TiDB.Phase).NotTo(Equal(v1alpha1.UpgradePhase))
 		Expect(imageUpgraded(tc, v1alpha1.PDMemberType, pdSet)).To(BeTrue())
-		if !podsUpgraded(pdSet) {
+		if podsUpgrading(pdSet) {
 			Expect(imageUpgraded(tc, v1alpha1.TiKVMemberType, tikvSet)).To(BeFalse())
 			Expect(imageUpgraded(tc, v1alpha1.TiDBMemberType, tidbSet)).To(BeFalse())
 		}
@@ -114,37 +114,37 @@ func memberUpgraded() (bool, error) {
 		logf("tikv is upgrading")
 		Expect(tc.Status.TiDB.Phase).NotTo(Equal(v1alpha1.UpgradePhase))
 		Expect(imageUpgraded(tc, v1alpha1.PDMemberType, pdSet)).To(BeTrue())
-		Expect(podsUpgraded(pdSet)).To(BeTrue())
+		Expect(podsUpgrading(pdSet)).To(BeFalse())
 		Expect(imageUpgraded(tc, v1alpha1.TiKVMemberType, tikvSet)).To(BeTrue())
-		if !podsUpgraded(tikvSet) {
+		if podsUpgrading(tikvSet) {
 			Expect(imageUpgraded(tc, v1alpha1.TiDBMemberType, tidbSet)).To(BeFalse())
 		}
 		return false, nil
 	} else if tc.Status.TiDB.Phase == v1alpha1.UpgradePhase {
 		logf("tidb is upgrading")
 		Expect(imageUpgraded(tc, v1alpha1.PDMemberType, pdSet)).To(BeTrue())
-		Expect(podsUpgraded(pdSet)).To(BeTrue())
+		Expect(podsUpgrading(pdSet)).To(BeFalse())
 		Expect(imageUpgraded(tc, v1alpha1.TiKVMemberType, tikvSet)).To(BeTrue())
-		Expect(podsUpgraded(tikvSet)).To(BeTrue())
+		Expect(podsUpgrading(tikvSet)).To(BeFalse())
 		Expect(imageUpgraded(tc, v1alpha1.TiDBMemberType, tidbSet)).To(BeTrue())
 		return false, nil
 	}
 	if !imageUpgraded(tc, v1alpha1.PDMemberType, pdSet) {
 		return false, nil
 	}
-	if !podsUpgraded(pdSet) {
+	if podsUpgrading(pdSet) {
 		return false, nil
 	}
 	if !imageUpgraded(tc, v1alpha1.TiKVMemberType, tikvSet) {
 		return false, nil
 	}
-	if !podsUpgraded(tikvSet) {
+	if podsUpgrading(tikvSet) {
 		return false, nil
 	}
 	if !imageUpgraded(tc, v1alpha1.TiDBMemberType, tidbSet) {
 		return false, nil
 	}
-	return podsUpgraded(tidbSet), nil
+	return !podsUpgrading(tidbSet), nil
 
 }
 
@@ -159,8 +159,17 @@ func imageUpgraded(tc *v1alpha1.TidbCluster, memberType v1alpha1.MemberType, set
 	return false
 }
 
-func podsUpgraded(set *apps.StatefulSet) bool {
-	return set.Generation <= *set.Status.ObservedGeneration && set.Status.CurrentRevision == set.Status.UpdateRevision
+func podsUpgrading(set *apps.StatefulSet) bool {
+	if set.Status.ObservedGeneration == nil {
+		return false
+	}
+	if set.Status.CurrentRevision != set.Status.UpdateRevision {
+		return true
+	}
+	if set.Generation > *set.Status.ObservedGeneration && *set.Spec.Replicas == set.Status.Replicas {
+		return true
+	}
+	return false
 }
 
 func getImage(tc *v1alpha1.TidbCluster, memberType v1alpha1.MemberType) string {
