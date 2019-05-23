@@ -42,7 +42,7 @@ func main() {
 	fta.CheckAndRecoverEnvOrDie()
 
 	tidbVersion := conf.GetTiDBVersionOrDie()
-	upgardeTiDBVersions := conf.GetUpgradeTidbVersionsOrDie()
+	//upgardeTiDBVersions := conf.GetUpgradeTidbVersionsOrDie()
 
 	// operator config
 	operatorCfg := &tests.OperatorConfig{
@@ -172,75 +172,83 @@ func main() {
 
 	go oa.BeginInsertDataToOrDie(cluster1)
 	go oa.BeginInsertDataToOrDie(cluster2)
+	/*
+		// scale out cluster1 and cluster2
+		cluster1.ScaleTiDB(3).ScaleTiKV(5).ScalePD(5)
+		oa.ScaleTidbClusterOrDie(cluster1)
+		cluster2.ScaleTiDB(3).ScaleTiKV(5).ScalePD(5)
+		oa.ScaleTidbClusterOrDie(cluster2)
+		oa.CheckTidbClusterStatusOrDie(cluster1)
+		oa.CheckTidbClusterStatusOrDie(cluster2)
 
-	// scale out cluster1 and cluster2
-	cluster1.ScaleTiDB(3).ScaleTiKV(5).ScalePD(5)
-	oa.ScaleTidbClusterOrDie(cluster1)
-	cluster2.ScaleTiDB(3).ScaleTiKV(5).ScalePD(5)
-	oa.ScaleTidbClusterOrDie(cluster2)
-	oa.CheckTidbClusterStatusOrDie(cluster1)
-	oa.CheckTidbClusterStatusOrDie(cluster2)
+		// scale in cluster1 and cluster2
+		cluster1.ScaleTiDB(2).ScaleTiKV(3).ScalePD(3)
+		oa.ScaleTidbClusterOrDie(cluster1)
+		cluster2.ScaleTiDB(2).ScaleTiKV(3).ScalePD(3)
+		oa.ScaleTidbClusterOrDie(cluster2)
+		oa.CheckTidbClusterStatusOrDie(cluster1)
+		oa.CheckTidbClusterStatusOrDie(cluster2)
 
-	// scale in cluster1 and cluster2
-	cluster1.ScaleTiDB(2).ScaleTiKV(3).ScalePD(3)
-	oa.ScaleTidbClusterOrDie(cluster1)
-	cluster2.ScaleTiDB(2).ScaleTiKV(3).ScalePD(3)
-	oa.ScaleTidbClusterOrDie(cluster2)
-	oa.CheckTidbClusterStatusOrDie(cluster1)
-	oa.CheckTidbClusterStatusOrDie(cluster2)
+		// before upgrade cluster, register webhook first
+		oa.RegisterWebHookAndServiceOrDie(operatorCfg)
 
-	// before upgrade cluster, register webhook first
-	oa.RegisterWebHookAndServiceOrDie(operatorCfg)
+		// upgrade cluster1 and cluster2
+		firstUpgradeVersion := upgardeTiDBVersions[0]
+		cluster1.UpgradeAll(firstUpgradeVersion)
+		cluster2.UpgradeAll(firstUpgradeVersion)
+		oa.UpgradeTidbClusterOrDie(cluster1)
+		oa.UpgradeTidbClusterOrDie(cluster2)
+		oa.CheckTidbClusterStatusOrDie(cluster1)
+		oa.CheckTidbClusterStatusOrDie(cluster2)
 
-	// upgrade cluster1 and cluster2
-	firstUpgradeVersion := upgardeTiDBVersions[0]
-	cluster1.UpgradeAll(firstUpgradeVersion)
-	cluster2.UpgradeAll(firstUpgradeVersion)
-	oa.UpgradeTidbClusterOrDie(cluster1)
-	oa.UpgradeTidbClusterOrDie(cluster2)
-	oa.CheckTidbClusterStatusOrDie(cluster1)
-	oa.CheckTidbClusterStatusOrDie(cluster2)
+		// after upgrade cluster, clean webhook
+		oa.CleanWebHookAndService(operatorCfg)
 
-	// after upgrade cluster, clean webhook
-	oa.CleanWebHookAndService(operatorCfg)
+		// deploy and check cluster restore
+		oa.DeployTidbClusterOrDie(clusterRestoreTo)
+		oa.CheckTidbClusterStatusOrDie(clusterRestoreTo)
 
-	// deploy and check cluster restore
-	oa.DeployTidbClusterOrDie(clusterRestoreTo)
-	oa.CheckTidbClusterStatusOrDie(clusterRestoreTo)
+		// backup and restore
+		oa.BackupRestoreOrDie(clusterBackupFrom, clusterRestoreTo)
 
-	// backup and restore
-	oa.BackupRestoreOrDie(clusterBackupFrom, clusterRestoreTo)
+		// stop a node and failover automatically
+		physicalNode, node, faultTime := fta.StopNodeOrDie()
+		oa.EmitEvent(nil, fmt.Sprintf("StopNode: %s on %s", node, physicalNode))
+		oa.CheckFailoverPendingOrDie(allClusters, node, &faultTime)
+		oa.CheckFailoverOrDie(allClusters, node)
+		time.Sleep(3 * time.Minute)
+		fta.StartNodeOrDie(physicalNode, node)
+		oa.EmitEvent(nil, fmt.Sprintf("StartNode: %s on %s", node, physicalNode))
+		oa.CheckRecoverOrDie(allClusters)
+		for _, cluster := range allClusters {
+			oa.CheckTidbClusterStatusOrDie(cluster)
+		}
 
-	// stop a node and failover automatically
-	physicalNode, node, faultTime := fta.StopNodeOrDie()
-	oa.EmitEvent(nil, fmt.Sprintf("StopNode: %s on %s", node, physicalNode))
-	oa.CheckFailoverPendingOrDie(allClusters, node, &faultTime)
-	oa.CheckFailoverOrDie(allClusters, node)
+		// truncate a sst file and check failover
+		oa.TruncateSSTFileThenCheckFailoverOrDie(cluster1, 5*time.Minute)
+
+		// stop one etcd node and k8s/operator/tidbcluster is available
+		faultEtcd := tests.SelectNode(conf.ETCDs)
+		fta.StopETCDOrDie(faultEtcd)
+		defer fta.StartETCDOrDie(faultEtcd)
+		// TODO make the pause interval as a argument
+		time.Sleep(3 * time.Minute)
+		oa.CheckOneEtcdDownOrDie(operatorCfg, allClusters, faultEtcd)
+		fta.StartETCDOrDie(faultEtcd)
+
+		//clean temp dirs when stability success
+		err := conf.CleanTempDirs()
+		if err != nil {
+			glog.Errorf("failed to clean temp dirs, this error can be ignored.")
+		}
+	*/
+
+	faultApiserver := tests.SelectNode(conf.APIServers)
+	fta.StopKubeAPIServerOrDie(faultApiserver)
+	defer fta.StartKubeAPIServer(faultApiserver)
 	time.Sleep(3 * time.Minute)
-	fta.StartNodeOrDie(physicalNode, node)
-	oa.EmitEvent(nil, fmt.Sprintf("StartNode: %s on %s", node, physicalNode))
-	oa.CheckRecoverOrDie(allClusters)
-	for _, cluster := range allClusters {
-		oa.CheckTidbClusterStatusOrDie(cluster)
-	}
-
-	// truncate a sst file and check failover
-	oa.TruncateSSTFileThenCheckFailoverOrDie(cluster1, 5*time.Minute)
-
-	// stop one etcd node and k8s/operator/tidbcluster is available
-	faultEtcd := tests.SelectNode(conf.ETCDs)
-	fta.StopETCDOrDie(faultEtcd)
-	defer fta.StartETCDOrDie(faultEtcd)
-	// TODO make the pause interval as a argument
-	time.Sleep(3 * time.Minute)
-	oa.CheckOneEtcdDownOrDie(operatorCfg, allClusters, faultEtcd)
-	fta.StartETCDOrDie(faultEtcd)
-
-	//clean temp dirs when stability success
-	err := conf.CleanTempDirs()
-	if err != nil {
-		glog.Errorf("failed to clean temp dirs, this error can be ignored.")
-	}
+	oa.CheckOneApiserverDownOrDie(operatorCfg, allClusters, faultApiserver)
+	fta.StartKubeAPIServer(faultApiserver)
 
 	slack.NotifyAndCompleted("\nFinished.")
 }
