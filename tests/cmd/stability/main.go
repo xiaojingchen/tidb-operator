@@ -15,11 +15,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/golang/glog"
@@ -174,113 +172,115 @@ func run() {
 		}
 		cancel()
 
-		// configuration change
-		for _, cluster := range clusters {
-			cluster.EnableConfigMapRollout = true
+		/*
+			// configuration change
+			for _, cluster := range clusters {
+				cluster.EnableConfigMapRollout = true
 
-			// bad conf
-			cluster.TiDBPreStartScript = strconv.Quote("exit 1")
-			cluster.TiKVPreStartScript = strconv.Quote("exit 1")
-			cluster.PDPreStartScript = strconv.Quote("exit 1")
-			oa.UpgradeTidbClusterOrDie(cluster)
-			time.Sleep(30 * time.Second)
-			oa.CheckTidbClustersAvailableOrDie([]*tests.TidbClusterConfig{cluster})
-			// rollback conf
-			cluster.PDPreStartScript = strconv.Quote("")
-			cluster.TiKVPreStartScript = strconv.Quote("")
-			cluster.TiDBPreStartScript = strconv.Quote("")
-			oa.UpgradeTidbClusterOrDie(cluster)
-			oa.CheckTidbClusterStatusOrDie(cluster)
+				// bad conf
+				cluster.TiDBPreStartScript = strconv.Quote("exit 1")
+				cluster.TiKVPreStartScript = strconv.Quote("exit 1")
+				cluster.PDPreStartScript = strconv.Quote("exit 1")
+				oa.UpgradeTidbClusterOrDie(cluster)
+				time.Sleep(30 * time.Second)
+				oa.CheckTidbClustersAvailableOrDie([]*tests.TidbClusterConfig{cluster})
+				// rollback conf
+				cluster.PDPreStartScript = strconv.Quote("")
+				cluster.TiKVPreStartScript = strconv.Quote("")
+				cluster.TiDBPreStartScript = strconv.Quote("")
+				oa.UpgradeTidbClusterOrDie(cluster)
+				oa.CheckTidbClusterStatusOrDie(cluster)
 
-			cluster.UpdatePdMaxReplicas(cfg.PDMaxReplicas).
-				UpdateTiKVGrpcConcurrency(cfg.TiKVGrpcConcurrency).
-				UpdateTiDBTokenLimit(cfg.TiDBTokenLimit)
-			oa.UpgradeTidbClusterOrDie(cluster)
-			oa.CheckTidbClusterStatusOrDie(cluster)
-		}
-		oa.CleanWebHookAndServiceOrDie(ocfg)
-
-		for _, cluster := range clusters {
-			oa.CheckDataRegionDisasterToleranceOrDie(cluster)
-		}
-
-		// backup and restore
-		oa.DeployTidbClusterOrDie(restoreCluster)
-		addDeployedClusterFn(restoreCluster)
-		oa.CheckTidbClusterStatusOrDie(restoreCluster)
-		oa.BackupRestoreOrDie(clusters[0], restoreCluster)
-
-		// delete operator
-		oa.CleanOperatorOrDie(ocfg)
-		oa.CheckOperatorDownOrDie(deployedClusters)
-		oa.DeployOperatorOrDie(ocfg)
-
-		// stop node
-		physicalNode, node, faultTime := fta.StopNodeOrDie()
-		oa.EmitEvent(nil, fmt.Sprintf("StopNode: %s on %s", node, physicalNode))
-		oa.CheckFailoverPendingOrDie(deployedClusters, node, &faultTime)
-		oa.CheckFailoverOrDie(deployedClusters, node)
-		time.Sleep(3 * time.Minute)
-		fta.StartNodeOrDie(physicalNode, node)
-		oa.EmitEvent(nil, fmt.Sprintf("StartNode: %s on %s", node, physicalNode))
-		oa.CheckRecoverOrDie(deployedClusters)
-		for _, cluster := range deployedClusters {
-			oa.CheckTidbClusterStatusOrDie(cluster)
-		}
-
-		// truncate tikv sst file
-		oa.TruncateSSTFileThenCheckFailoverOrDie(clusters[0], 5*time.Minute)
-
-		// stop one etcd
-		faultEtcd := tests.SelectNode(cfg.ETCDs)
-		fta.StopETCDOrDie(faultEtcd)
-		defer fta.StartETCDOrDie(faultEtcd)
-		time.Sleep(3 * time.Minute)
-		oa.CheckEtcdDownOrDie(ocfg, deployedClusters, faultEtcd)
-		fta.StartETCDOrDie(faultEtcd)
-
-		// stop all etcds
-		fta.StopETCDOrDie()
-		time.Sleep(10 * time.Minute)
-		fta.StartETCDOrDie()
-		oa.CheckEtcdDownOrDie(ocfg, deployedClusters, "")
-
-		// stop all kubelets
-		fta.StopKubeletOrDie()
-		time.Sleep(10 * time.Minute)
-		fta.StartKubeletOrDie()
-		oa.CheckKubeletDownOrDie(ocfg, deployedClusters, "")
-
-		// stop all kube-proxy and k8s/operator/tidbcluster is available
-		fta.StopKubeProxyOrDie()
-		oa.CheckKubeProxyDownOrDie(ocfg, clusters)
-		fta.StartKubeProxyOrDie()
-
-		// stop all kube-scheduler pods
-		for _, physicalNode := range cfg.APIServers {
-			for _, vNode := range physicalNode.Nodes {
-				fta.StopKubeSchedulerOrDie(vNode)
+				cluster.UpdatePdMaxReplicas(cfg.PDMaxReplicas).
+					UpdateTiKVGrpcConcurrency(cfg.TiKVGrpcConcurrency).
+					UpdateTiDBTokenLimit(cfg.TiDBTokenLimit)
+				oa.UpgradeTidbClusterOrDie(cluster)
+				oa.CheckTidbClusterStatusOrDie(cluster)
 			}
-		}
-		oa.CheckKubeSchedulerDownOrDie(ocfg, clusters)
-		for _, physicalNode := range cfg.APIServers {
-			for _, vNode := range physicalNode.Nodes {
-				fta.StartKubeSchedulerOrDie(vNode)
-			}
-		}
+			oa.CleanWebHookAndServiceOrDie(ocfg)
 
-		// stop all kube-controller-manager pods
-		for _, physicalNode := range cfg.APIServers {
-			for _, vNode := range physicalNode.Nodes {
-				fta.StopKubeControllerManagerOrDie(vNode)
-			}
-		}
-		oa.CheckKubeControllerManagerDownOrDie(ocfg, clusters)
-		for _, physicalNode := range cfg.APIServers {
-			for _, vNode := range physicalNode.Nodes {
-				fta.StartKubeControllerManagerOrDie(vNode)
-			}
-		}
+				for _, cluster := range clusters {
+					oa.CheckDataRegionDisasterToleranceOrDie(cluster)
+				}
+
+					// backup and restore
+					oa.DeployTidbClusterOrDie(restoreCluster)
+					addDeployedClusterFn(restoreCluster)
+					oa.CheckTidbClusterStatusOrDie(restoreCluster)
+					oa.BackupRestoreOrDie(clusters[0], restoreCluster)
+
+					// delete operator
+					oa.CleanOperatorOrDie(ocfg)
+					oa.CheckOperatorDownOrDie(deployedClusters)
+					oa.DeployOperatorOrDie(ocfg)
+
+					// stop node
+					physicalNode, node, faultTime := fta.StopNodeOrDie()
+					oa.EmitEvent(nil, fmt.Sprintf("StopNode: %s on %s", node, physicalNode))
+					oa.CheckFailoverPendingOrDie(deployedClusters, node, &faultTime)
+					oa.CheckFailoverOrDie(deployedClusters, node)
+					time.Sleep(3 * time.Minute)
+					fta.StartNodeOrDie(physicalNode, node)
+					oa.EmitEvent(nil, fmt.Sprintf("StartNode: %s on %s", node, physicalNode))
+					oa.CheckRecoverOrDie(deployedClusters)
+					for _, cluster := range deployedClusters {
+						oa.CheckTidbClusterStatusOrDie(cluster)
+					}
+
+					// truncate tikv sst file
+					oa.TruncateSSTFileThenCheckFailoverOrDie(clusters[0], 5*time.Minute)
+
+					// stop one etcd
+					faultEtcd := tests.SelectNode(cfg.ETCDs)
+					fta.StopETCDOrDie(faultEtcd)
+					defer fta.StartETCDOrDie(faultEtcd)
+					time.Sleep(3 * time.Minute)
+					oa.CheckEtcdDownOrDie(ocfg, deployedClusters, faultEtcd)
+					fta.StartETCDOrDie(faultEtcd)
+
+					// stop all etcds
+					fta.StopETCDOrDie()
+					time.Sleep(10 * time.Minute)
+					fta.StartETCDOrDie()
+					oa.CheckEtcdDownOrDie(ocfg, deployedClusters, "")
+
+					// stop all kubelets
+					fta.StopKubeletOrDie()
+					time.Sleep(10 * time.Minute)
+					fta.StartKubeletOrDie()
+					oa.CheckKubeletDownOrDie(ocfg, deployedClusters, "")
+
+					// stop all kube-proxy and k8s/operator/tidbcluster is available
+					fta.StopKubeProxyOrDie()
+					oa.CheckKubeProxyDownOrDie(ocfg, clusters)
+					fta.StartKubeProxyOrDie()
+
+					// stop all kube-scheduler pods
+					for _, physicalNode := range cfg.APIServers {
+						for _, vNode := range physicalNode.Nodes {
+							fta.StopKubeSchedulerOrDie(vNode)
+						}
+					}
+					oa.CheckKubeSchedulerDownOrDie(ocfg, clusters)
+					for _, physicalNode := range cfg.APIServers {
+						for _, vNode := range physicalNode.Nodes {
+							fta.StartKubeSchedulerOrDie(vNode)
+						}
+					}
+
+					// stop all kube-controller-manager pods
+					for _, physicalNode := range cfg.APIServers {
+						for _, vNode := range physicalNode.Nodes {
+							fta.StopKubeControllerManagerOrDie(vNode)
+						}
+					}
+					oa.CheckKubeControllerManagerDownOrDie(ocfg, clusters)
+					for _, physicalNode := range cfg.APIServers {
+						for _, vNode := range physicalNode.Nodes {
+							fta.StartKubeControllerManagerOrDie(vNode)
+						}
+					}
+		*/
 	}
 
 	// before operator upgrade

@@ -1004,7 +1004,7 @@ func (oa *operatorActions) CheckUpgrade(ctx context.Context, info *TidbClusterCo
 				glog.V(4).Infof("index:%d,schedulers:%v,error:%v", i, schedulers, err)
 				if len(schedulers) > 1 {
 					glog.Errorf("there are too many evict leader schedulers: %v", schedulers)
-					return false, nil
+					return false, fmt.Errorf("there are too many evict leader schedulers: %v", schedulers)
 				}
 				if len(schedulers) == 0 {
 					return false, nil
